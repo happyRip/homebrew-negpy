@@ -1,0 +1,56 @@
+name: Bump NegPy cask
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check latest NegPy release
+        id: latest
+        run: |
+          set -euo pipefail
+          latest=$(curl -sL -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/marcinz606/NegPy/releases/latest | jq -r .tag_name)
+          current=$(grep -m1 'version "' Casks/negpy.rb | sed -E 's/.*version "([^"]+)".*/\1/')
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+
+      - name: Update cask
+        if: steps.latest.outputs.latest != steps.latest.outputs.current
+        run: |
+          set -euo pipefail
+          version="${{ steps.latest.outputs.latest }}"
+          base="https://github.com/marcinz606/NegPy/releases/download/${version}"
+
+          arm_sha=$(curl -sL "${base}/NegPy-${version}-macOS-arm64.dmg" | sha256sum | cut -d' ' -f1)
+          intel_sha=$(curl -sL "${base}/NegPy-${version}-macOS-x86_64.dmg" | sha256sum | cut -d' ' -f1)
+
+          if [ -z "$arm_sha" ] || [ -z "$intel_sha" ]; then
+            echo "Failed to compute checksums for $version" >&2
+            exit 1
+          fi
+
+          sed -i \
+            -e "s/version \".*\"/version \"${version}\"/" \
+            -e "s/arm:   \".*\"/arm:   \"${arm_sha}\"/" \
+            -e "s/intel: \".*\"/intel: \"${intel_sha}\"/" \
+            Casks/negpy.rb
+
+      - name: Commit and push
+        if: steps.latest.outputs.latest != steps.latest.outputs.current
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/negpy.rb
+          git commit -m "negpy: bump to ${{ steps.latest.outputs.latest }}"
+          git push
